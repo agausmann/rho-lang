@@ -1,0 +1,57 @@
+Rhombus is an embeddable scripting language largely inspired by Lua,
+Javascript, and Rust, and also functional languages like Lisp and Haskell.
+
+Its memory model is unique by design; all values are reference-counted and
+copy-on-write, which eliminates the possiblity of reference cycles and the need
+for garbage collection.
+
+It also avoids situations where unexpected side effects might happen; for
+example, when a value referenced in two places is modified in one location,
+the value is copied first so that the change is not made to the value in the
+other location.
+(Considering adding opt-in side effects / shared modification in the future)
+
+Types:
+- nulltype `null`
+- bool `true`, `false`
+- int `20`, `0x10c`, `0b010`
+- float `1.0`, `-1.e100`
+- str `'foo'`
+- list `[1, true, 'foo']`
+- table `[x: 2]`
+- type (values: all of the above)
+- function `fn() {}`
+
+Builtin Functions:
+repr()
+eval()
+print()
+input()
+cmp()
+
+Assignment:
+= += -= *= /= %= &= != ^=
+
+Binary Operators:
++ - * / % & | ^ && || == != > < >= <=
+
+Unary Operators:
+! - 
+
+Special:
+[] ()
+
+Keywords:
+if else while for fn return continue break match in loop true false
+
+Expressions:
+    (<expr>)
+    a <biop> b
+    <unop>a
+    a[b]
+    a(b, ...)
+    [a, ...]
+    [a: b, ...]
+    {<stmt> ... <expr>}
+
+Patterns:
