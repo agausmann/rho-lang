@@ -56,16 +56,31 @@ fn binary_op() -> impl Parser<Token, BinaryOp, Error = Error> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum UnaryOp {
+pub enum PrefixOp {
     Pos,
     Neg,
     Not,
 }
 
-fn unary_op() -> impl Parser<Token, UnaryOp, Error = Error> {
-    (just(Token::Plus).to(UnaryOp::Pos))
-        .or(just(Token::Minus).to(UnaryOp::Neg))
-        .or(just(Token::Exclamation).to(UnaryOp::Not))
+fn prefix_op() -> impl Parser<Token, PrefixOp, Error = Error> {
+    (just(Token::Plus).to(PrefixOp::Pos))
+        .or(just(Token::Minus).to(PrefixOp::Neg))
+        .or(just(Token::Exclamation).to(PrefixOp::Not))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PostfixOp {
+    Call(Vec<Expr>),
+}
+
+fn postfix_op(
+    expr: impl Parser<Token, Expr, Error = Error>,
+) -> impl Parser<Token, PostfixOp, Error = Error> {
+    // Not allowed to recursively call `expr`.
+    expr.repeated()
+        .delimited_by(Token::LeftParen, Token::RightParen)
+        .map(|option| option.unwrap_or_else(|| vec![Expr::Invalid]))
+        .map(PostfixOp::Call)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,39 +89,50 @@ pub enum Expr {
     Literal(Value),
     Variable(String),
     BinaryOps(Box<Expr>, Vec<(BinaryOp, Expr)>),
-    UnaryOps(Box<Expr>, Vec<UnaryOp>),
+    Term(Vec<PrefixOp>, Box<Expr>, Vec<PostfixOp>),
+}
+
+fn term<E>(expr: E) -> impl Parser<Token, Expr, Error = Error>
+where
+    E: Parser<Token, Expr, Error = Error> + Clone,
+{
+    // Subset of the expression parser that parses anything except binary operators.
+    // This is used to prevent the sub-expressions of a binary operator from parsing
+    // operators that we want the parent to parse.
+    (just::<_, Simple<Token>>(Token::Whitespace).repeated())
+        .padding_for(
+            (prefix_op().repeated())
+                .then(
+                    filter_map(|span, token| match token {
+                        Token::Identifier(name) => Ok(Expr::Variable(name)),
+                        Token::String(value) => Ok(Expr::Literal(Value::String(value))),
+                        Token::Int(value) => Ok(Expr::Literal(Value::Int(value))),
+                        Token::Float(value) => Ok(Expr::Literal(Value::Float(value))),
+                        _ => Err(Error::expected_token_found(Some(span), vec![], Some(token))),
+                    })
+                    // Allow parsing a full expression if it is enclosed in parentheses.
+                    .or((expr.clone())
+                        .delimited_by(Token::LeftParen, Token::RightParen)
+                        .map(|option| option.unwrap_or(Expr::Invalid))),
+                )
+                .then(postfix_op(expr).repeated()),
+        )
+        // Handle trailing whitespace
+        .padded_by(just(Token::Whitespace).repeated())
+        .map(|((prefix, base), postfix)| {
+            if prefix.is_empty() && postfix.is_empty() {
+                base
+            } else {
+                Expr::Term(prefix, Box::new(base), postfix)
+            }
+        })
 }
 
 pub fn expr() -> impl Parser<Token, Expr, Error = Error> {
     recursive(|expr| {
-        // Sub-parser that parses anything except binary operators.
-        // This is used to prevent the sub-expressions of a binary operator from parsing
-        // operators that we want the parent to parse.
-        let term = recursive(|term| {
-            (just::<_, Simple<Token>>(Token::Whitespace).repeated()).padding_for(
-                filter_map(|span, token| match token {
-                    Token::Identifier(name) => Ok(Expr::Variable(name)),
-                    Token::String(value) => Ok(Expr::Literal(Value::String(value))),
-                    Token::Int(value) => Ok(Expr::Literal(Value::Int(value))),
-                    Token::Float(value) => Ok(Expr::Literal(Value::Float(value))),
-                    _ => Err(Error::expected_token_found(Some(span), vec![], Some(token))),
-                })
-                // Allow parsing a full expression if it is enclosed in parentheses.
-                .or((expr.clone())
-                    .delimited_by(Token::LeftParen, Token::RightParen)
-                    .map(|option| option.unwrap_or(Expr::Invalid)))
-                .or(unary_op()
-                    .repeated_at_least(1)
-                    .then(term)
-                    .map(|(ops, base)| Expr::UnaryOps(Box::new(base), ops)))
-                // Handle trailing whitespace
-                .padded_by(just(Token::Whitespace).repeated()),
-            )
-        });
-
-        (term.clone())
+        (term(expr.clone()))
             // Handle trailing binary operators
-            .then(binary_op().then(term.clone()).repeated_at_least(1).or_not())
+            .then(binary_op().then(term(expr)).repeated_at_least(1).or_not())
             .map(|(base, maybe_ops)| match maybe_ops {
                 Some(ops) => Expr::BinaryOps(Box::new(base), ops),
                 None => base,
@@ -146,13 +172,18 @@ mod tests {
                     (BinaryOp::Sub, Expr::Literal(Value::Int(2))),
                     (
                         BinaryOp::Add,
-                        Expr::UnaryOps(Box::new(Expr::Literal(Value::Int(3))), vec![UnaryOp::Neg]),
+                        Expr::Term(
+                            vec![PrefixOp::Neg],
+                            Box::new(Expr::Literal(Value::Int(3))),
+                            vec![],
+                        ),
                     ),
                     (
                         BinaryOp::Sub,
-                        Expr::UnaryOps(
+                        Expr::Term(
+                            vec![PrefixOp::Neg, PrefixOp::Not],
                             Box::new(Expr::Literal(Value::Int(4))),
-                            vec![UnaryOp::Neg, UnaryOp::Not],
+                            vec![],
                         ),
                     ),
                     (BinaryOp::Mul, Expr::Literal(Value::Int(5))),
@@ -178,7 +209,8 @@ mod tests {
                         Box::new(Expr::Literal(Value::Int(3))),
                         vec![(
                             BinaryOp::Mul,
-                            Expr::UnaryOps(
+                            Expr::Term(
+                                vec![PrefixOp::Neg],
                                 Box::new(Expr::BinaryOps(
                                     Box::new(Expr::Literal(Value::Int(4))),
                                     vec![
@@ -186,12 +218,36 @@ mod tests {
                                         (BinaryOp::Sub, Expr::Literal(Value::Int(6))),
                                     ],
                                 )),
-                                vec![UnaryOp::Neg],
+                                vec![],
                             ),
                         )],
                     ),
                 )],
             ),
+        )
+    }
+
+    #[test]
+    fn function_call() {
+        assert_expr(
+            "foo(bar)",
+            Expr::Term(
+                vec![],
+                Box::new(Expr::Variable("foo".to_string())),
+                vec![PostfixOp::Call(vec![Expr::Variable("bar".to_string())])],
+            ),
+        )
+    }
+
+    #[test]
+    fn function_call_with_prefixes() {
+        assert_expr(
+            "!is_even(5)",
+            Expr::Term(
+                vec![PrefixOp::Not],
+                Box::new(Expr::Variable("is_even".to_string())),
+                vec![PostfixOp::Call(vec![Expr::Literal(Value::Int(5))])]
+            )
         )
     }
 }
