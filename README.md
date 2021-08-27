@@ -1,4 +1,3 @@
-# rhombus
+# Rho
 
-An experimental scripting language with a reference-counted, copy-on-write
-memory model.
+An experimental scripting language with a pass-by-value data model.

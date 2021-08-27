@@ -1,11 +1,18 @@
-Rhombus is an embeddable scripting language largely inspired by Lua,
+Rho is an embeddable scripting language for Rust, largely inspired by Lua,
 Javascript, and Rust, and also functional languages like Lisp and Haskell.
 
-Its memory model is unique by design; all values are reference-counted and
-copy-on-write, which eliminates the possiblity of reference cycles and the need
-for garbage collection.
+Its data model is unique by design; every variable has a unique value, and
+can not a shared reference to a value, unlike most other scripting languages.
+This includes re-assigned values in the local scope, and also function
+arguments (passed "by-value").
 
-It also avoids situations where unexpected side effects might happen; for
+In practice, at the low level, values aren't always copied when they are passed
+around. To optimize runtime performance, data can have multiple references, but
+data that has multiple references can not be modified. To make changes to the
+value, you must make your own local copy of it so it doesn't affect the value
+that others see. This kind of lazy copying is also known as "copy-on-write" (CoW).
+
+This avoids situations where unexpected side effects might happen; for
 example, when a value referenced in two places is modified in one location,
 the value is copied first so that the change is not made to the value in the
 other location.
