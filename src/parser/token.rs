@@ -10,8 +10,35 @@ const BINDIGIT: &str = "01";
 
 pub type Error = Simple<char>;
 
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub has_space_before: Option<bool>,
+}
+
+impl Token {
+    pub fn of(kind: TokenKind) -> Self {
+        Self {
+            kind,
+            has_space_before: None,
+        }
+    }
+}
+
+// Custom PartialEq to only compare `has_space_before` if both are `Some`.
+// Enables creating `Token` values to match against only the `TokenKind` where whitespace doesn't
+// matter, by setting `has_space_before` to `None`.
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && (self.has_space_before.is_none()
+                || other.has_space_before.is_none()
+                || self.has_space_before == other.has_space_before)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
+pub enum TokenKind {
     Whitespace,
     LeftParen,
     RightParen,
@@ -74,16 +101,16 @@ fn float_int_suffix() -> impl Parser<char, Vec<char>, Error = Error> {
     .chain(float_exponent().or_not().flatten())
 }
 
-fn parse_number(string: String) -> Token {
+fn parse_number(string: String) -> TokenKind {
     if string.contains(&['.', 'e', 'E'][..]) {
-        Token::Float(string.parse().unwrap())
+        TokenKind::Float(string.parse().unwrap())
     } else {
-        Token::Int(string.parse().unwrap())
+        TokenKind::Int(string.parse().unwrap())
     }
 }
 
 //TODO: Floats starting with a decimal point (.)
-fn leading_digit_number() -> impl Parser<char, Token, Error = Error> {
+fn leading_digit_number() -> impl Parser<char, TokenKind, Error = Error> {
     (nonzero_digit()
         .chain(digit().repeated())
         .chain::<char, _, _>(float_int_suffix())
@@ -94,13 +121,13 @@ fn leading_digit_number() -> impl Parser<char, Token, Error = Error> {
             hexdigit()
                 .repeated_at_least(1)
                 .collect::<String>()
-                .map(|s| Token::Int(i64::from_str_radix(&s, 16).unwrap())),
+                .map(|s| TokenKind::Int(i64::from_str_radix(&s, 16).unwrap())),
         ))
         .or(just('b').padding_for(
             bindigit()
                 .repeated_at_least(1)
                 .collect::<String>()
-                .map(|s| Token::Int(i64::from_str_radix(&s, 2).unwrap())),
+                .map(|s| TokenKind::Int(i64::from_str_radix(&s, 2).unwrap())),
         ))
         .or(digit()
             .repeated_at_least(1)
@@ -110,7 +137,7 @@ fn leading_digit_number() -> impl Parser<char, Token, Error = Error> {
     ))
 }
 
-fn string_contents() -> impl Parser<char, Token, Error = Error> {
+fn string_contents() -> impl Parser<char, TokenKind, Error = Error> {
     (none_of("\"\\".chars()).map(Some))
         .or(just('\\').padding_for(
             // Escape codes
@@ -133,30 +160,30 @@ fn string_contents() -> impl Parser<char, Token, Error = Error> {
         .repeated()
         .flatten()
         .collect()
-        .map(Token::String)
+        .map(TokenKind::String)
 }
 
-fn token() -> impl Parser<char, Token, Error = Error> {
+fn token_kind() -> impl Parser<char, TokenKind, Error = Error> {
     (one_of(WHITESPACE.chars())
         .repeated_at_least(1)
-        .to(Token::Whitespace))
-    .or(just('(').to(Token::LeftParen))
-    .or(just(')').to(Token::RightParen))
-    .or(just('[').to(Token::LeftBracket))
-    .or(just(']').to(Token::RightBracket))
-    .or(just('{').to(Token::LeftBrace))
-    .or(just('}').to(Token::RightBrace))
-    .or(just('!').to(Token::Exclamation))
-    .or(just('+').to(Token::Plus))
-    .or(just('-').to(Token::Minus))
-    .or(just('*').to(Token::Asterisk))
+        .to(TokenKind::Whitespace))
+    .or(just('(').to(TokenKind::LeftParen))
+    .or(just(')').to(TokenKind::RightParen))
+    .or(just('[').to(TokenKind::LeftBracket))
+    .or(just(']').to(TokenKind::RightBracket))
+    .or(just('{').to(TokenKind::LeftBrace))
+    .or(just('}').to(TokenKind::RightBrace))
+    .or(just('!').to(TokenKind::Exclamation))
+    .or(just('+').to(TokenKind::Plus))
+    .or(just('-').to(TokenKind::Minus))
+    .or(just('*').to(TokenKind::Asterisk))
     .or(just('/')
         .then(
             // Single-line comment
             (just('/')
                 // Take until end of line
                 .then(none_of("\n\r".chars()).repeated())
-                .to(Token::Whitespace))
+                .to(TokenKind::Whitespace))
             // Multiline comment
             .or(just('*')
                 // Zero or more characters that does not contain an asterisk.
@@ -176,26 +203,26 @@ fn token() -> impl Parser<char, Token, Error = Error> {
                 )
                 // Trailing slash.
                 .then(just('/'))
-                .to(Token::Whitespace))
+                .to(TokenKind::Whitespace))
             .or_not(),
         )
-        .map(|(_, comment)| comment.unwrap_or(Token::Slash)))
-    .or(just('%').to(Token::Percent))
-    .or(just('&').to(Token::And))
-    .or(just('|').to(Token::Pipe))
-    .or(just('^').to(Token::Caret))
-    .or(just('.').to(Token::Dot))
-    .or(just(',').to(Token::Comma))
-    .or(just(':').to(Token::Colon))
-    .or(just('=').to(Token::Equal))
-    .or(just('<').to(Token::Less))
-    .or(just('>').to(Token::Greater))
+        .map(|(_, comment)| comment.unwrap_or(TokenKind::Slash)))
+    .or(just('%').to(TokenKind::Percent))
+    .or(just('&').to(TokenKind::And))
+    .or(just('|').to(TokenKind::Pipe))
+    .or(just('^').to(TokenKind::Caret))
+    .or(just('.').to(TokenKind::Dot))
+    .or(just(',').to(TokenKind::Comma))
+    .or(just(':').to(TokenKind::Colon))
+    .or(just('=').to(TokenKind::Equal))
+    .or(just('<').to(TokenKind::Less))
+    .or(just('>').to(TokenKind::Greater))
     .or(one_of(ALPHA_UND.chars())
         .chain(one_of(ALPHA_NUM_UND.chars()).repeated())
         .collect()
         .map(|s| match s {
             // TODO Check for keywords
-            _ => Token::Identifier(s),
+            _ => TokenKind::Identifier(s),
         }))
     .or(leading_digit_number())
     .or(just('"')
@@ -203,8 +230,24 @@ fn token() -> impl Parser<char, Token, Error = Error> {
         .padded_by(just('"')))
 }
 
+fn tokens() -> impl Parser<TokenKind, Vec<Token>, Error = Simple<TokenKind>> {
+    (just(TokenKind::Whitespace).repeated()).padding_for(
+        any()
+            .then(just(TokenKind::Whitespace).ignored().repeated())
+            .map(|(kind, whitespace)| Token {
+                kind,
+                has_space_before: Some(!whitespace.is_empty()),
+            })
+            .repeated(),
+    )
+}
+
 pub fn get_tokens(s: &str) -> Result<Vec<Token>, Vec<Error>> {
-    token().repeated().padded_by(end()).parse(s)
+    let token_kinds = token_kind().repeated().padded_by(end()).parse(s)?;
+    Ok(tokens()
+        .padded_by(end())
+        .parse(token_kinds)
+        .expect("whitespace folding failed"))
 }
 
 #[cfg(test)]
@@ -212,7 +255,7 @@ mod tests {
     use super::*;
 
     fn assert_tokens(input: &str) {
-        dbg!(get_tokens(input).unwrap());
+        get_tokens(input).unwrap();
     }
 
     #[test]

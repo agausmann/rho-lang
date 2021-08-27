@@ -1,4 +1,5 @@
 use crate::parser::token::Token;
+use crate::parser::token::TokenKind;
 use chumsky::prelude::*;
 
 pub type Error = Simple<Token>;
@@ -30,28 +31,38 @@ pub enum BinaryOp {
     Ge,
 }
 
+fn token(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
+    just(Token::of(kind))
+}
+
+fn non_padded(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
+    just(Token { kind, has_space_before: Some(false)})
+}
+
 fn binary_op() -> impl Parser<Token, BinaryOp, Error = Error> {
-    (just(Token::Plus).to(BinaryOp::Add))
-        .or(just(Token::Minus).to(BinaryOp::Sub))
-        .or(just(Token::Asterisk).to(BinaryOp::Mul))
-        .or(just(Token::Slash).to(BinaryOp::Div))
-        .or(just(Token::Percent).to(BinaryOp::Mod))
-        .or(just(Token::And)
-            .then(just(Token::And).to(BinaryOp::And).or_not())
+    (token(TokenKind::Plus).to(BinaryOp::Add))
+        .or(token(TokenKind::Minus).to(BinaryOp::Sub))
+        .or(token(TokenKind::Asterisk).to(BinaryOp::Mul))
+        .or(token(TokenKind::Slash).to(BinaryOp::Div))
+        .or(token(TokenKind::Percent).to(BinaryOp::Mod))
+        .or(token(TokenKind::And)
+            .then(non_padded(TokenKind::And).to(BinaryOp::And).or_not())
             .map(|(_, op)| op.unwrap_or(BinaryOp::BitAnd)))
-        .or(just(Token::Pipe)
-            .then(just(Token::Pipe).to(BinaryOp::Or).or_not())
+        .or(token(TokenKind::Pipe)
+            .then(non_padded(TokenKind::Pipe).to(BinaryOp::Or).or_not())
             .map(|(_, op)| op.unwrap_or(BinaryOp::BitOr)))
-        .or(just(Token::Caret).to(BinaryOp::BitXor))
-        .or(just(Token::Equal).then(just(Token::Equal)).to(BinaryOp::Eq))
-        .or(just(Token::Exclamation)
-            .then(just(Token::Equal))
+        .or(token(TokenKind::Caret).to(BinaryOp::BitXor))
+        .or(token(TokenKind::Equal)
+            .then(non_padded(TokenKind::Equal))
+            .to(BinaryOp::Eq))
+        .or(token(TokenKind::Exclamation)
+            .then(non_padded(TokenKind::Equal))
             .to(BinaryOp::Ne))
-        .or(just(Token::Less)
-            .then(just(Token::Equal).to(BinaryOp::Le).or_not())
+        .or(token(TokenKind::Less)
+            .then(non_padded(TokenKind::Equal).to(BinaryOp::Le).or_not())
             .map(|(_, op)| op.unwrap_or(BinaryOp::Lt)))
-        .or(just(Token::Greater)
-            .then(just(Token::Greater).to(BinaryOp::Ge).or_not())
+        .or(token(TokenKind::Greater)
+            .then(non_padded(TokenKind::Greater).to(BinaryOp::Ge).or_not())
             .map(|(_, op)| op.unwrap_or(BinaryOp::Gt)))
 }
 
@@ -63,9 +74,9 @@ pub enum PrefixOp {
 }
 
 fn prefix_op() -> impl Parser<Token, PrefixOp, Error = Error> {
-    (just(Token::Plus).to(PrefixOp::Pos))
-        .or(just(Token::Minus).to(PrefixOp::Neg))
-        .or(just(Token::Exclamation).to(PrefixOp::Not))
+    (token(TokenKind::Plus).to(PrefixOp::Pos))
+        .or(token(TokenKind::Minus).to(PrefixOp::Neg))
+        .or(token(TokenKind::Exclamation).to(PrefixOp::Not))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,7 +89,7 @@ fn postfix_op(
 ) -> impl Parser<Token, PostfixOp, Error = Error> {
     // Not allowed to recursively call `expr`.
     expr.repeated()
-        .delimited_by(Token::LeftParen, Token::RightParen)
+        .delimited_by(Token::of(TokenKind::LeftParen), Token::of(TokenKind::RightParen))
         .map(|option| option.unwrap_or_else(|| vec![Expr::Invalid]))
         .map(PostfixOp::Call)
 }
@@ -99,26 +110,21 @@ where
     // Subset of the expression parser that parses anything except binary operators.
     // This is used to prevent the sub-expressions of a binary operator from parsing
     // operators that we want the parent to parse.
-    (just::<_, Simple<Token>>(Token::Whitespace).repeated())
-        .padding_for(
-            (prefix_op().repeated())
-                .then(
-                    filter_map(|span, token| match token {
-                        Token::Identifier(name) => Ok(Expr::Variable(name)),
-                        Token::String(value) => Ok(Expr::Literal(Value::String(value))),
-                        Token::Int(value) => Ok(Expr::Literal(Value::Int(value))),
-                        Token::Float(value) => Ok(Expr::Literal(Value::Float(value))),
-                        _ => Err(Error::expected_token_found(Some(span), vec![], Some(token))),
-                    })
-                    // Allow parsing a full expression if it is enclosed in parentheses.
-                    .or((expr.clone())
-                        .delimited_by(Token::LeftParen, Token::RightParen)
-                        .map(|option| option.unwrap_or(Expr::Invalid))),
-                )
-                .then(postfix_op(expr).repeated()),
+    (prefix_op().repeated())
+        .then(
+            filter_map(|span, token: Token| match token.kind {
+                TokenKind::Identifier(name) => Ok(Expr::Variable(name)),
+                TokenKind::String(value) => Ok(Expr::Literal(Value::String(value))),
+                TokenKind::Int(value) => Ok(Expr::Literal(Value::Int(value))),
+                TokenKind::Float(value) => Ok(Expr::Literal(Value::Float(value))),
+                _ => Err(Error::expected_token_found(Some(span), vec![], Some(token))),
+            })
+            // Allow parsing a full expression if it is enclosed in parentheses.
+            .or((expr.clone())
+                .delimited_by(Token::of(TokenKind::LeftParen), Token::of(TokenKind::RightParen))
+                .map(|option| option.unwrap_or(Expr::Invalid))),
         )
-        // Handle trailing whitespace
-        .padded_by(just(Token::Whitespace).repeated())
+        .then(postfix_op(expr).repeated())
         .map(|((prefix, base), postfix)| {
             if prefix.is_empty() && postfix.is_empty() {
                 base
@@ -246,8 +252,8 @@ mod tests {
             Expr::Term(
                 vec![PrefixOp::Not],
                 Box::new(Expr::Variable("is_even".to_string())),
-                vec![PostfixOp::Call(vec![Expr::Literal(Value::Int(5))])]
-            )
+                vec![PostfixOp::Call(vec![Expr::Literal(Value::Int(5))])],
+            ),
         )
     }
 }
