@@ -1,5 +1,5 @@
-use chumsky::prelude::*;
 use crate::parser::token::Token;
+use chumsky::prelude::*;
 
 pub type Error = Simple<Token>;
 
@@ -106,12 +106,7 @@ pub fn expr() -> impl Parser<Token, Expr, Error = Error> {
 
         (term.clone())
             // Handle trailing binary operators
-            .then(
-                binary_op()
-                    .then(term.clone())
-                    .repeated_at_least(1)
-                    .or_not(),
-            )
+            .then(binary_op().then(term.clone()).repeated_at_least(1).or_not())
             .map(|(base, maybe_ops)| match maybe_ops {
                 Some(ops) => Expr::BinaryOps(Box::new(base), ops),
                 None => base,
@@ -149,13 +144,54 @@ mod tests {
                 Box::new(Expr::Literal(Value::Int(1))),
                 vec![
                     (BinaryOp::Sub, Expr::Literal(Value::Int(2))),
-                    (BinaryOp::Add, Expr::UnaryOps(Box::new(Expr::Literal(Value::Int(3))), vec![UnaryOp::Neg])),
-                    (BinaryOp::Sub, Expr::UnaryOps(Box::new(Expr::Literal(Value::Int(4))), vec![UnaryOp::Neg, UnaryOp::Not])),
+                    (
+                        BinaryOp::Add,
+                        Expr::UnaryOps(Box::new(Expr::Literal(Value::Int(3))), vec![UnaryOp::Neg]),
+                    ),
+                    (
+                        BinaryOp::Sub,
+                        Expr::UnaryOps(
+                            Box::new(Expr::Literal(Value::Int(4))),
+                            vec![UnaryOp::Neg, UnaryOp::Not],
+                        ),
+                    ),
                     (BinaryOp::Mul, Expr::Literal(Value::Int(5))),
                     (BinaryOp::Div, Expr::Literal(Value::Int(6))),
                     (BinaryOp::Mod, Expr::Literal(Value::Int(7))),
                 ],
             ),
         );
+    }
+
+    #[test]
+    fn parentheses() {
+        assert_expr(
+            "(1 + 2) + (3 * -(4 * 5 - 6))",
+            Expr::BinaryOps(
+                Box::new(Expr::BinaryOps(
+                    Box::new(Expr::Literal(Value::Int(1))),
+                    vec![(BinaryOp::Add, Expr::Literal(Value::Int(2)))],
+                )),
+                vec![(
+                    BinaryOp::Add,
+                    Expr::BinaryOps(
+                        Box::new(Expr::Literal(Value::Int(3))),
+                        vec![(
+                            BinaryOp::Mul,
+                            Expr::UnaryOps(
+                                Box::new(Expr::BinaryOps(
+                                    Box::new(Expr::Literal(Value::Int(4))),
+                                    vec![
+                                        (BinaryOp::Mul, Expr::Literal(Value::Int(5))),
+                                        (BinaryOp::Sub, Expr::Literal(Value::Int(6))),
+                                    ],
+                                )),
+                                vec![UnaryOp::Neg],
+                            ),
+                        )],
+                    ),
+                )],
+            ),
+        )
     }
 }
