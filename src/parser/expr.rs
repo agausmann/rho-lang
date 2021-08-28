@@ -30,7 +30,28 @@ fn token(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
 }
 
 fn non_padded(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
-    just(Token { kind, has_space_before: Some(false)})
+    just(Token {
+        kind,
+        has_space_before: Some(false),
+    })
+}
+
+fn comma_separated<P: 'static, T: 'static>(parser: P) -> impl Parser<Token, Vec<T>, Error = Error>
+where
+    P: Parser<Token, T, Error = Error>,
+{
+    // Parse a set of items separated by commas, allowing for a trailing comma.
+    recursive(|tail| {
+        parser
+            .chain(
+                token(TokenKind::Comma)
+                    .padding_for(tail.or_not().flatten())
+                    .or_not()
+                    .flatten(),
+            )
+            .or_not()
+            .flatten()
+    })
 }
 
 fn binary_op() -> impl Parser<Token, BinaryOp, Error = Error> {
@@ -78,12 +99,16 @@ pub enum PostfixOp {
     Call(Vec<Expr>),
 }
 
-fn postfix_op(
-    expr: impl Parser<Token, Expr, Error = Error>,
-) -> impl Parser<Token, PostfixOp, Error = Error> {
+fn postfix_op<E>(expr: E) -> impl Parser<Token, PostfixOp, Error = Error>
+where
+    E: Parser<Token, Expr, Error = Error> + 'static,
+{
     // Not allowed to recursively call `expr`.
-    expr.repeated()
-        .delimited_by(Token::of(TokenKind::LeftParen), Token::of(TokenKind::RightParen))
+    comma_separated(expr)
+        .delimited_by(
+            Token::of(TokenKind::LeftParen),
+            Token::of(TokenKind::RightParen),
+        )
         .map(|option| option.unwrap_or_else(|| vec![Expr::Invalid]))
         .map(PostfixOp::Call)
 }
@@ -99,7 +124,7 @@ pub enum Expr {
 
 fn term<E>(expr: E) -> impl Parser<Token, Expr, Error = Error>
 where
-    E: Parser<Token, Expr, Error = Error> + Clone,
+    E: Parser<Token, Expr, Error = Error> + Clone + 'static,
 {
     // Subset of the expression parser that parses anything except binary operators.
     // This is used to prevent the sub-expressions of a binary operator from parsing
@@ -117,7 +142,10 @@ where
             })
             // Allow parsing a full expression if it is enclosed in parentheses.
             .or((expr.clone())
-                .delimited_by(Token::of(TokenKind::LeftParen), Token::of(TokenKind::RightParen))
+                .delimited_by(
+                    Token::of(TokenKind::LeftParen),
+                    Token::of(TokenKind::RightParen),
+                )
                 .map(|option| option.unwrap_or(Expr::Invalid))),
         )
         .then(postfix_op(expr).repeated())
@@ -232,11 +260,14 @@ mod tests {
     #[test]
     fn function_call() {
         assert_expr(
-            "foo(bar)",
+            "foo(bar, baz)",
             Expr::Term(
                 vec![],
                 Box::new(Expr::Variable("foo".to_string())),
-                vec![PostfixOp::Call(vec![Expr::Variable("bar".to_string())])],
+                vec![PostfixOp::Call(vec![
+                    Expr::Variable("bar".to_string()),
+                    Expr::Variable("baz".to_string()),
+                ])],
             ),
         )
     }
@@ -249,6 +280,30 @@ mod tests {
                 vec![PrefixOp::Not],
                 Box::new(Expr::Variable("is_even".to_string())),
                 vec![PostfixOp::Call(vec![Expr::Literal(Value::Int(5))])],
+            ),
+        )
+    }
+
+    #[test]
+    fn function_call_trailing_comma() {
+        assert_expr(
+            "foo(bar,)",
+            Expr::Term(
+                vec![],
+                Box::new(Expr::Variable("foo".to_string())),
+                vec![PostfixOp::Call(vec![Expr::Variable("bar".to_string())])],
+            ),
+        )
+    }
+
+    #[test]
+    fn function_call_no_args() {
+        assert_expr(
+            "foo()",
+            Expr::Term(
+                vec![],
+                Box::new(Expr::Variable("foo".to_string())),
+                vec![PostfixOp::Call(vec![])],
             ),
         )
     }
