@@ -1,15 +1,9 @@
 use crate::parser::token::Token;
 use crate::parser::token::TokenKind;
+use crate::value::Value;
 use chumsky::prelude::*;
 
 pub type Error = Simple<Token>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    String(String),
-    Int(i64),
-    Float(f64),
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
