@@ -108,9 +108,11 @@ where
         .then(
             filter_map(|span, token: Token| match token.kind {
                 TokenKind::Identifier(name) => Ok(Expr::Variable(name)),
-                TokenKind::String(value) => Ok(Expr::Literal(Value::String(value))),
+                TokenKind::True => Ok(Expr::Literal(Value::Bool(true))),
+                TokenKind::False => Ok(Expr::Literal(Value::Bool(false))),
                 TokenKind::Int(value) => Ok(Expr::Literal(Value::Int(value))),
                 TokenKind::Float(value) => Ok(Expr::Literal(Value::Float(value))),
+                TokenKind::String(value) => Ok(Expr::Literal(Value::String(value))),
                 _ => Err(Error::expected_token_found(Some(span), vec![], Some(token))),
             })
             // Allow parsing a full expression if it is enclosed in parentheses.

@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
-    String(String),
+    Bool(bool),
     Int(i64),
     Float(f64),
+    String(String),
 }

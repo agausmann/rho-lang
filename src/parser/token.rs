@@ -65,6 +65,8 @@ pub enum TokenKind {
     Int(i64),
     Float(f64),
     String(String),
+    True,
+    False,
 }
 
 fn nonzero_digit() -> impl Parser<char, char, Error = Error> {
@@ -219,9 +221,10 @@ fn token_kind() -> impl Parser<char, TokenKind, Error = Error> {
     .or(just('>').to(TokenKind::Greater))
     .or(one_of(ALPHA_UND.chars())
         .chain(one_of(ALPHA_NUM_UND.chars()).repeated())
-        .collect()
-        .map(|s| match s {
-            // TODO Check for keywords
+        .collect::<String>()
+        .map(|s| match &*s {
+            "true" => TokenKind::True,
+            "false" => TokenKind::False,
             _ => TokenKind::Identifier(s),
         }))
     .or(leading_digit_number())
@@ -254,32 +257,51 @@ pub fn get_tokens(s: &str) -> Result<Vec<Token>, Vec<Error>> {
 mod tests {
     use super::*;
 
-    fn assert_tokens(input: &str) {
-        get_tokens(input).unwrap();
+    fn assert_tokens(input: &str, expected: &[TokenKind]) {
+        let tokens = get_tokens(input).unwrap();
+        let token_kinds: Vec<_> = tokens.into_iter().map(|token| token.kind).collect();
+        assert_eq!(token_kinds, expected);
     }
 
     #[test]
     fn comment() {
-        assert_tokens("// This is a line_comment");
+        assert_tokens("// This is a line_comment", &[]);
     }
 
     #[test]
     fn block_comment() {
-        assert_tokens("/* This is a block comment */");
+        assert_tokens("/* This is a block comment */", &[]);
     }
 
     #[test]
     fn block_comment_with_asterisk() {
-        assert_tokens("/** This *is* a block comment with embedded asterisks. **/");
+        assert_tokens(
+            "/** This *is* a block comment with embedded asterisks. **/",
+            &[],
+        );
     }
 
     #[test]
     fn string() {
-        assert_tokens(r#" "Hello World" "#);
+        assert_tokens(
+            r#" "Hello World" "#,
+            &[TokenKind::String("Hello World".to_string())],
+        );
     }
 
     #[test]
     fn string_with_escapes() {
-        assert_tokens(r#" "Hello\r\n\    \t \"World!\"\x0A" "#);
+        assert_tokens(
+            r#" "Hello\r\n\    \t \"World!\"\x0A" "#,
+            &[TokenKind::String("Hello\r\n\t \"World!\"\n".to_string())],
+        );
+    }
+
+    #[test]
+    fn keywords() {
+        assert_tokens(
+            "true false",
+            &[TokenKind::True, TokenKind::False],
+        )
     }
 }
