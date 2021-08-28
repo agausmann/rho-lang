@@ -299,9 +299,11 @@ mod tests {
 
     #[test]
     fn keywords() {
-        assert_tokens(
-            "true false",
-            &[TokenKind::True, TokenKind::False],
-        )
+        assert_tokens("true false", &[TokenKind::True, TokenKind::False])
+    }
+
+    #[test]
+    fn float() {
+        assert_tokens("2.0 1e6 2.99e8", &[TokenKind::Float(2.0), TokenKind::Float(1e6), TokenKind::Float(2.99e8)])
     }
 }
