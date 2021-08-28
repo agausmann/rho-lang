@@ -98,6 +98,7 @@ fn prefix_op() -> impl Parser<Token, PrefixOp, Error = Error> {
 pub enum PostfixOp {
     Call(Vec<Expr>),
     Index(Expr),
+    Member(String),
 }
 
 fn postfix_op<E>(expr: E) -> impl Parser<Token, PostfixOp, Error = Error>
@@ -118,6 +119,16 @@ where
         )
         .map(|option| option.unwrap_or(Expr::Invalid))
         .map(PostfixOp::Index))
+    .or(
+        token(TokenKind::Dot).padding_for(filter_map(|span, token: Token| match token.kind {
+            TokenKind::Identifier(name) => Ok(PostfixOp::Member(name)),
+            _ => Err(Error::expected_token_found(
+                Some(span),
+                vec![Token::of(TokenKind::Identifier("..".to_string()))],
+                Some(token),
+            )),
+        })),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -323,6 +334,21 @@ mod tests {
                 vec![],
                 Box::new(Expr::Variable("arr".to_string())),
                 vec![PostfixOp::Index(Expr::Literal(Value::Int(2)))],
+            ),
+        )
+    }
+
+    #[test]
+    fn member_access() {
+        assert_expr(
+            "object.method()",
+            Expr::Term(
+                vec![],
+                Box::new(Expr::Variable("object".to_string())),
+                vec![
+                    PostfixOp::Member("method".to_string()),
+                    PostfixOp::Call(vec![]),
+                ],
             ),
         )
     }
