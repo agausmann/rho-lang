@@ -97,20 +97,27 @@ fn prefix_op() -> impl Parser<Token, PrefixOp, Error = Error> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PostfixOp {
     Call(Vec<Expr>),
+    Index(Expr),
 }
 
 fn postfix_op<E>(expr: E) -> impl Parser<Token, PostfixOp, Error = Error>
 where
-    E: Parser<Token, Expr, Error = Error> + 'static,
+    E: Parser<Token, Expr, Error = Error> + Clone + 'static,
 {
-    // Not allowed to recursively call `expr`.
-    comma_separated(expr)
+    (comma_separated(expr.clone())
         .delimited_by(
             Token::of(TokenKind::LeftParen),
             Token::of(TokenKind::RightParen),
         )
         .map(|option| option.unwrap_or_else(|| vec![Expr::Invalid]))
-        .map(PostfixOp::Call)
+        .map(PostfixOp::Call))
+    .or((expr.clone())
+        .delimited_by(
+            Token::of(TokenKind::LeftBracket),
+            Token::of(TokenKind::RightBracket),
+        )
+        .map(|option| option.unwrap_or(Expr::Invalid))
+        .map(PostfixOp::Index))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,6 +311,18 @@ mod tests {
                 vec![],
                 Box::new(Expr::Variable("foo".to_string())),
                 vec![PostfixOp::Call(vec![])],
+            ),
+        )
+    }
+
+    #[test]
+    fn index() {
+        assert_expr(
+            "arr[2]",
+            Expr::Term(
+                vec![],
+                Box::new(Expr::Variable("arr".to_string())),
+                vec![PostfixOp::Index(Expr::Literal(Value::Int(2)))],
             ),
         )
     }
