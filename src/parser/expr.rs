@@ -11,7 +11,7 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
-    Mod,
+    Rem,
     And,
     Or,
     BitAnd,
@@ -23,6 +23,17 @@ pub enum BinaryOp {
     Le,
     Gt,
     Ge,
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    RemAssign,
+    AndAssign,
+    OrAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
 }
 
 fn token(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
@@ -55,30 +66,79 @@ where
 }
 
 fn binary_op() -> impl Parser<Token, BinaryOp, Error = Error> {
-    (token(TokenKind::Plus).to(BinaryOp::Add))
-        .or(token(TokenKind::Minus).to(BinaryOp::Sub))
-        .or(token(TokenKind::Asterisk).to(BinaryOp::Mul))
-        .or(token(TokenKind::Slash).to(BinaryOp::Div))
-        .or(token(TokenKind::Percent).to(BinaryOp::Mod))
-        .or(token(TokenKind::And)
-            .then(non_padded(TokenKind::And).to(BinaryOp::And).or_not())
-            .map(|(_, op)| op.unwrap_or(BinaryOp::BitAnd)))
-        .or(token(TokenKind::Pipe)
-            .then(non_padded(TokenKind::Pipe).to(BinaryOp::Or).or_not())
-            .map(|(_, op)| op.unwrap_or(BinaryOp::BitOr)))
-        .or(token(TokenKind::Caret).to(BinaryOp::BitXor))
-        .or(token(TokenKind::Equal)
-            .then(non_padded(TokenKind::Equal))
-            .to(BinaryOp::Eq))
-        .or(token(TokenKind::Exclamation)
-            .then(non_padded(TokenKind::Equal))
-            .to(BinaryOp::Ne))
-        .or(token(TokenKind::Less)
-            .then(non_padded(TokenKind::Equal).to(BinaryOp::Le).or_not())
-            .map(|(_, op)| op.unwrap_or(BinaryOp::Lt)))
-        .or(token(TokenKind::Greater)
-            .then(non_padded(TokenKind::Greater).to(BinaryOp::Ge).or_not())
-            .map(|(_, op)| op.unwrap_or(BinaryOp::Gt)))
+    (token(TokenKind::Plus)
+        .then(
+            non_padded(TokenKind::Equal)
+                .to(BinaryOp::AddAssign)
+                .or_not(),
+        )
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Add)))
+    .or(token(TokenKind::Minus)
+        .to(BinaryOp::Sub)
+        .then(
+            non_padded(TokenKind::Equal)
+                .to(BinaryOp::SubAssign)
+                .or_not(),
+        )
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Sub)))
+    .or(token(TokenKind::Asterisk)
+        .then(
+            non_padded(TokenKind::Equal)
+                .to(BinaryOp::MulAssign)
+                .or_not(),
+        )
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Mul)))
+    .or(token(TokenKind::Slash)
+        .then(
+            non_padded(TokenKind::Equal)
+                .to(BinaryOp::DivAssign)
+                .or_not(),
+        )
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Div)))
+    .or(token(TokenKind::Percent)
+        .then(
+            non_padded(TokenKind::Equal)
+                .to(BinaryOp::RemAssign)
+                .or_not(),
+        )
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Rem)))
+    .or(token(TokenKind::And)
+        .then(non_padded(TokenKind::And).or_not())
+        .then(non_padded(TokenKind::Equal).or_not())
+        .map(|((_, and), assign)| match (and, assign) {
+            (None, None) => BinaryOp::BitAnd,
+            (Some(_), None) => BinaryOp::And,
+            (None, Some(_)) => BinaryOp::BitAndAssign,
+            (Some(_), Some(_)) => BinaryOp::AndAssign,
+        }))
+    .or(token(TokenKind::Pipe)
+        .then(non_padded(TokenKind::Pipe).or_not())
+        .then(non_padded(TokenKind::Equal).or_not())
+        .map(|((_, or), assign)| match (or, assign) {
+            (None, None) => BinaryOp::BitOr,
+            (Some(_), None) => BinaryOp::Or,
+            (None, Some(_)) => BinaryOp::BitOrAssign,
+            (Some(_), Some(_)) => BinaryOp::OrAssign,
+        }))
+    .or(token(TokenKind::Caret)
+        .then(
+            non_padded(TokenKind::Equal)
+                .to(BinaryOp::BitXorAssign)
+                .or_not(),
+        )
+        .map(|(_, op)| op.unwrap_or(BinaryOp::BitXor)))
+    .or(token(TokenKind::Equal)
+        .then(non_padded(TokenKind::Equal).to(BinaryOp::Eq).or_not())
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Assign)))
+    .or(token(TokenKind::Exclamation)
+        .then(non_padded(TokenKind::Equal))
+        .to(BinaryOp::Ne))
+    .or(token(TokenKind::Less)
+        .then(non_padded(TokenKind::Equal).to(BinaryOp::Le).or_not())
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Lt)))
+    .or(token(TokenKind::Greater)
+        .then(non_padded(TokenKind::Greater).to(BinaryOp::Ge).or_not())
+        .map(|(_, op)| op.unwrap_or(BinaryOp::Gt)))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,7 +296,7 @@ mod tests {
                     ),
                     (BinaryOp::Mul, Expr::Literal(Value::Int(5))),
                     (BinaryOp::Div, Expr::Literal(Value::Int(6))),
-                    (BinaryOp::Mod, Expr::Literal(Value::Int(7))),
+                    (BinaryOp::Rem, Expr::Literal(Value::Int(7))),
                 ],
             ),
         );
@@ -348,6 +408,20 @@ mod tests {
                 vec![
                     PostfixOp::Member("method".to_string()),
                     PostfixOp::Call(vec![]),
+                ],
+            ),
+        )
+    }
+
+    #[test]
+    fn assign() {
+        assert_expr(
+            "j = i += 1",
+            Expr::BinaryOps(
+                Box::new(Expr::Variable("j".to_string())),
+                vec![
+                    (BinaryOp::Assign, Expr::Variable("i".to_string())),
+                    (BinaryOp::AddAssign, Expr::Literal(Value::Int(1))),
                 ],
             ),
         )

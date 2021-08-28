@@ -233,24 +233,25 @@ fn token_kind() -> impl Parser<char, TokenKind, Error = Error> {
         .padded_by(just('"')))
 }
 
-fn tokens() -> impl Parser<TokenKind, Vec<Token>, Error = Simple<TokenKind>> {
-    (just(TokenKind::Whitespace).repeated()).padding_for(
-        any()
-            .then(just(TokenKind::Whitespace).ignored().repeated())
-            .map(|(kind, whitespace)| Token {
-                kind,
-                has_space_before: Some(!whitespace.is_empty()),
-            })
-            .repeated(),
-    )
-}
-
 pub fn get_tokens(s: &str) -> Result<Vec<Token>, Vec<Error>> {
     let token_kinds = token_kind().repeated().padded_by(end()).parse(s)?;
-    Ok(tokens()
-        .padded_by(end())
-        .parse(token_kinds)
-        .expect("whitespace folding failed"))
+    let mut tokens = Vec::new();
+    let mut has_space_before = false;
+    for kind in token_kinds {
+        match kind {
+            TokenKind::Whitespace => {
+                has_space_before = true;
+            }
+            _ => {
+                tokens.push(Token {
+                    kind,
+                    has_space_before: Some(has_space_before),
+                });
+                has_space_before = false;
+            }
+        }
+    }
+    Ok(tokens)
 }
 
 #[cfg(test)]
@@ -304,6 +305,13 @@ mod tests {
 
     #[test]
     fn float() {
-        assert_tokens("2.0 1e6 2.99e8", &[TokenKind::Float(2.0), TokenKind::Float(1e6), TokenKind::Float(2.99e8)])
+        assert_tokens(
+            "2.0 1e6 2.99e8",
+            &[
+                TokenKind::Float(2.0),
+                TokenKind::Float(1e6),
+                TokenKind::Float(2.99e8),
+            ],
+        )
     }
 }
