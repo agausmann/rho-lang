@@ -1,3 +1,4 @@
+use crate::eval::EvalError;
 use crate::parser::token::Token;
 use crate::parser::token::TokenKind;
 use crate::value::Value;
@@ -97,6 +98,26 @@ impl BinaryOp {
 
     fn is_right_associative(&self) -> bool {
         !self.is_left_associative()
+    }
+
+    pub(crate) fn short_circuit(&self, left: &Value) -> Result<Option<Value>, EvalError> {
+        match self {
+            Self::And => {
+                if left.as_bool()? == false {
+                    Ok(Some(left.clone()))
+                } else {
+                    Ok(None)
+                }
+            }
+            Self::Or => {
+                if left.as_bool()? == true {
+                    Ok(Some(left.clone()))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Ok(None)
+        }
     }
 }
 
@@ -207,7 +228,6 @@ fn binary_op() -> impl Parser<Token, BinaryOp, Error = Error> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
-    Pos,
     Neg,
     Not,
     Call(Vec<Expr>),
@@ -216,8 +236,7 @@ pub enum UnaryOp {
 }
 
 fn prefix_op() -> impl Parser<Token, UnaryOp, Error = Error> {
-    (token(TokenKind::Plus).to(UnaryOp::Pos))
-        .or(token(TokenKind::Minus).to(UnaryOp::Neg))
+    token(TokenKind::Minus).to(UnaryOp::Neg)
         .or(token(TokenKind::Exclamation).to(UnaryOp::Not))
 }
 
