@@ -36,6 +36,70 @@ pub enum BinaryOp {
     BitXorAssign,
 }
 
+impl BinaryOp {
+    fn precedence(&self) -> u8 {
+        match self {
+            Self::Assign
+            | Self::AddAssign
+            | Self::SubAssign
+            | Self::MulAssign
+            | Self::DivAssign
+            | Self::RemAssign
+            | Self::AndAssign
+            | Self::OrAssign
+            | Self::BitAndAssign
+            | Self::BitOrAssign
+            | Self::BitXorAssign => 0,
+            Self::Or => 1,
+            Self::And => 2,
+            Self::Eq | Self::Ne | Self::Lt | Self::Le | Self::Gt | Self::Ge => 3,
+            Self::BitOr => 4,
+            Self::BitXor => 5,
+            Self::BitAnd => 6,
+            // TODO bit shifts
+            Self::Add | Self::Sub => 8,
+            Self::Mul | Self::Div | Self::Rem => 9,
+        }
+    }
+
+    fn is_left_associative(&self) -> bool {
+        match self {
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::Rem
+            | Self::And
+            | Self::Or
+            | Self::BitAnd
+            | Self::BitOr
+            | Self::BitXor
+            | Self::Eq
+            | Self::Ne
+            | Self::Lt
+            | Self::Le
+            | Self::Gt
+            | Self::Ge => true,
+
+            Self::Assign
+            | Self::AddAssign
+            | Self::SubAssign
+            | Self::MulAssign
+            | Self::DivAssign
+            | Self::RemAssign
+            | Self::AndAssign
+            | Self::OrAssign
+            | Self::BitAndAssign
+            | Self::BitOrAssign
+            | Self::BitXorAssign => false,
+        }
+    }
+
+    fn is_right_associative(&self) -> bool {
+        !self.is_left_associative()
+    }
+}
+
 fn token(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
     just(Token::of(kind))
 }
@@ -142,26 +206,22 @@ fn binary_op() -> impl Parser<Token, BinaryOp, Error = Error> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum PrefixOp {
+pub enum UnaryOp {
     Pos,
     Neg,
     Not,
-}
-
-fn prefix_op() -> impl Parser<Token, PrefixOp, Error = Error> {
-    (token(TokenKind::Plus).to(PrefixOp::Pos))
-        .or(token(TokenKind::Minus).to(PrefixOp::Neg))
-        .or(token(TokenKind::Exclamation).to(PrefixOp::Not))
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PostfixOp {
     Call(Vec<Expr>),
     Index(Expr),
     Member(String),
 }
 
-fn postfix_op<E>(expr: E) -> impl Parser<Token, PostfixOp, Error = Error>
+fn prefix_op() -> impl Parser<Token, UnaryOp, Error = Error> {
+    (token(TokenKind::Plus).to(UnaryOp::Pos))
+        .or(token(TokenKind::Minus).to(UnaryOp::Neg))
+        .or(token(TokenKind::Exclamation).to(UnaryOp::Not))
+}
+
+fn postfix_op<E>(expr: E) -> impl Parser<Token, UnaryOp, Error = Error>
 where
     E: Parser<Token, Expr, Error = Error> + Clone + 'static,
 {
@@ -171,17 +231,17 @@ where
             Token::of(TokenKind::RightParen),
         )
         .map(|option| option.unwrap_or_else(|| vec![Expr::Invalid]))
-        .map(PostfixOp::Call))
+        .map(UnaryOp::Call))
     .or((expr.clone())
         .delimited_by(
             Token::of(TokenKind::LeftBracket),
             Token::of(TokenKind::RightBracket),
         )
         .map(|option| option.unwrap_or(Expr::Invalid))
-        .map(PostfixOp::Index))
+        .map(UnaryOp::Index))
     .or(
         token(TokenKind::Dot).padding_for(filter_map(|span, token: Token| match token.kind {
-            TokenKind::Identifier(name) => Ok(PostfixOp::Member(name)),
+            TokenKind::Identifier(name) => Ok(UnaryOp::Member(name)),
             _ => Err(Error::expected_token_found(
                 Some(span),
                 vec![Token::of(TokenKind::Identifier("..".to_string()))],
@@ -196,8 +256,8 @@ pub enum Expr {
     Invalid,
     Literal(Value),
     Variable(String),
-    BinaryOps(Box<Expr>, Vec<(BinaryOp, Expr)>),
-    Term(Vec<PrefixOp>, Box<Expr>, Vec<PostfixOp>),
+    BinaryOp(Box<(BinaryOp, Expr, Expr)>),
+    UnaryOp(Box<(UnaryOp, Expr)>),
 }
 
 fn term<E>(expr: E) -> impl Parser<Token, Expr, Error = Error>
@@ -228,22 +288,79 @@ where
         )
         .then(postfix_op(expr).repeated())
         .map(|((prefix, base), postfix)| {
-            if prefix.is_empty() && postfix.is_empty() {
-                base
-            } else {
-                Expr::Term(prefix, Box::new(base), postfix)
+            let mut ops = postfix;
+            ops.extend(prefix.into_iter().rev());
+            let mut expr = base;
+            for op in ops {
+                expr = Expr::UnaryOp(Box::new((op, expr)));
             }
+            expr
         })
+}
+
+struct ShuntingYard {
+    output_stack: Vec<Expr>,
+    op_stack: Vec<BinaryOp>,
+}
+
+impl ShuntingYard {
+    fn new() -> Self {
+        Self {
+            output_stack: Vec::new(),
+            op_stack: Vec::new(),
+        }
+    }
+
+    fn push_expr(&mut self, expr: Expr) {
+        self.output_stack.push(expr)
+    }
+
+    fn push_op(&mut self, op: BinaryOp) {
+        while let Some(head) = self.op_stack.last() {
+            if head.precedence() <= op.precedence()
+                && (op.is_right_associative() || head.precedence() != op.precedence())
+            {
+                break;
+            }
+            self.reduce();
+        }
+        self.op_stack.push(op);
+    }
+
+    fn reduce(&mut self) {
+        let op = self.op_stack.pop().expect("stack underflow");
+        let right = self.output_stack.pop().expect("stack underflow");
+        let left = self.output_stack.pop().expect("stack underflow");
+        self.output_stack
+            .push(Expr::BinaryOp(Box::new((op, left, right))));
+    }
+
+    fn finish(mut self) -> Expr {
+        while !self.op_stack.is_empty() {
+            self.reduce();
+        }
+        assert!(self.output_stack.len() == 1, "output not fully reduced");
+        self.output_stack.pop().unwrap()
+    }
 }
 
 pub fn expr() -> impl Parser<Token, Expr, Error = Error> {
     recursive(|expr| {
         (term(expr.clone()))
             // Handle trailing binary operators
-            .then(binary_op().then(term(expr)).repeated_at_least(1).or_not())
-            .map(|(base, maybe_ops)| match maybe_ops {
-                Some(ops) => Expr::BinaryOps(Box::new(base), ops),
-                None => base,
+            .then(binary_op().then(term(expr)).repeated())
+            .map(|(base, ops)| {
+                if ops.is_empty() {
+                    base
+                } else {
+                    let mut shunting_yard = ShuntingYard::new();
+                    shunting_yard.push_expr(base);
+                    for (op, term) in ops {
+                        shunting_yard.push_op(op);
+                        shunting_yard.push_expr(term);
+                    }
+                    shunting_yard.finish()
+                }
             })
     })
 }
@@ -263,10 +380,11 @@ mod tests {
     fn two_plus_two() {
         assert_expr(
             "2 + 2",
-            Expr::BinaryOps(
-                Box::new(Expr::Literal(Value::Int(2))),
-                vec![(BinaryOp::Add, Expr::Literal(Value::Int(2)))],
-            ),
+            Expr::BinaryOp(Box::new((
+                BinaryOp::Add,
+                Expr::Literal(Value::Int(2)),
+                Expr::Literal(Value::Int(2)),
+            ))),
         );
     }
 
@@ -274,31 +392,37 @@ mod tests {
     fn multiple_operators() {
         assert_expr(
             "1 - 2 + -3 - -!4 * 5 / 6 % 7",
-            Expr::BinaryOps(
-                Box::new(Expr::Literal(Value::Int(1))),
-                vec![
-                    (BinaryOp::Sub, Expr::Literal(Value::Int(2))),
-                    (
-                        BinaryOp::Add,
-                        Expr::Term(
-                            vec![PrefixOp::Neg],
-                            Box::new(Expr::Literal(Value::Int(3))),
-                            vec![],
-                        ),
-                    ),
-                    (
+            Expr::BinaryOp(Box::new((
+                BinaryOp::Sub,
+                Expr::BinaryOp(Box::new((
+                    BinaryOp::Add,
+                    Expr::BinaryOp(Box::new((
                         BinaryOp::Sub,
-                        Expr::Term(
-                            vec![PrefixOp::Neg, PrefixOp::Not],
-                            Box::new(Expr::Literal(Value::Int(4))),
-                            vec![],
-                        ),
-                    ),
-                    (BinaryOp::Mul, Expr::Literal(Value::Int(5))),
-                    (BinaryOp::Div, Expr::Literal(Value::Int(6))),
-                    (BinaryOp::Rem, Expr::Literal(Value::Int(7))),
-                ],
-            ),
+                        Expr::Literal(Value::Int(1)),
+                        Expr::Literal(Value::Int(2)),
+                    ))),
+                    Expr::UnaryOp(Box::new((UnaryOp::Neg, Expr::Literal(Value::Int(3))))),
+                ))),
+                Expr::BinaryOp(Box::new((
+                    BinaryOp::Rem,
+                    Expr::BinaryOp(Box::new((
+                        BinaryOp::Div,
+                        Expr::BinaryOp(Box::new((
+                            BinaryOp::Mul,
+                            Expr::UnaryOp(Box::new((
+                                UnaryOp::Neg,
+                                Expr::UnaryOp(Box::new((
+                                    UnaryOp::Not,
+                                    Expr::Literal(Value::Int(4)),
+                                ))),
+                            ))),
+                            Expr::Literal(Value::Int(5)),
+                        ))),
+                        Expr::Literal(Value::Int(6)),
+                    ))),
+                    Expr::Literal(Value::Int(7)),
+                ))),
+            ))),
         );
     }
 
@@ -306,32 +430,30 @@ mod tests {
     fn parentheses() {
         assert_expr(
             "(1 + 2) + (3 * -(4 * 5 - 6))",
-            Expr::BinaryOps(
-                Box::new(Expr::BinaryOps(
-                    Box::new(Expr::Literal(Value::Int(1))),
-                    vec![(BinaryOp::Add, Expr::Literal(Value::Int(2)))],
-                )),
-                vec![(
+            Expr::BinaryOp(Box::new((
+                BinaryOp::Add,
+                Expr::BinaryOp(Box::new((
                     BinaryOp::Add,
-                    Expr::BinaryOps(
-                        Box::new(Expr::Literal(Value::Int(3))),
-                        vec![(
-                            BinaryOp::Mul,
-                            Expr::Term(
-                                vec![PrefixOp::Neg],
-                                Box::new(Expr::BinaryOps(
-                                    Box::new(Expr::Literal(Value::Int(4))),
-                                    vec![
-                                        (BinaryOp::Mul, Expr::Literal(Value::Int(5))),
-                                        (BinaryOp::Sub, Expr::Literal(Value::Int(6))),
-                                    ],
-                                )),
-                                vec![],
-                            ),
-                        )],
-                    ),
-                )],
-            ),
+                    Expr::Literal(Value::Int(1)),
+                    Expr::Literal(Value::Int(2)),
+                ))),
+                Expr::BinaryOp(Box::new((
+                    BinaryOp::Mul,
+                    Expr::Literal(Value::Int(3)),
+                    Expr::UnaryOp(Box::new((
+                        UnaryOp::Neg,
+                        Expr::BinaryOp(Box::new((
+                            BinaryOp::Sub,
+                            Expr::BinaryOp(Box::new((
+                                BinaryOp::Mul,
+                                Expr::Literal(Value::Int(4)),
+                                Expr::Literal(Value::Int(5)),
+                            ))),
+                            Expr::Literal(Value::Int(6)),
+                        ))),
+                    ))),
+                ))),
+            ))),
         )
     }
 
@@ -339,14 +461,13 @@ mod tests {
     fn function_call() {
         assert_expr(
             "foo(bar, baz)",
-            Expr::Term(
-                vec![],
-                Box::new(Expr::Variable("foo".to_string())),
-                vec![PostfixOp::Call(vec![
+            Expr::UnaryOp(Box::new((
+                UnaryOp::Call(vec![
                     Expr::Variable("bar".to_string()),
                     Expr::Variable("baz".to_string()),
-                ])],
-            ),
+                ]),
+                Expr::Variable("foo".to_string()),
+            ))),
         )
     }
 
@@ -354,11 +475,13 @@ mod tests {
     fn function_call_with_prefixes() {
         assert_expr(
             "!is_even(5)",
-            Expr::Term(
-                vec![PrefixOp::Not],
-                Box::new(Expr::Variable("is_even".to_string())),
-                vec![PostfixOp::Call(vec![Expr::Literal(Value::Int(5))])],
-            ),
+            Expr::UnaryOp(Box::new((
+                UnaryOp::Not,
+                Expr::UnaryOp(Box::new((
+                    UnaryOp::Call(vec![Expr::Literal(Value::Int(5))]),
+                    Expr::Variable("is_even".to_string()),
+                ))),
+            ))),
         )
     }
 
@@ -366,11 +489,10 @@ mod tests {
     fn function_call_trailing_comma() {
         assert_expr(
             "foo(bar,)",
-            Expr::Term(
-                vec![],
-                Box::new(Expr::Variable("foo".to_string())),
-                vec![PostfixOp::Call(vec![Expr::Variable("bar".to_string())])],
-            ),
+            Expr::UnaryOp(Box::new((
+                UnaryOp::Call(vec![Expr::Variable("bar".to_string())]),
+                Expr::Variable("foo".to_string()),
+            ))),
         )
     }
 
@@ -378,11 +500,10 @@ mod tests {
     fn function_call_no_args() {
         assert_expr(
             "foo()",
-            Expr::Term(
-                vec![],
-                Box::new(Expr::Variable("foo".to_string())),
-                vec![PostfixOp::Call(vec![])],
-            ),
+            Expr::UnaryOp(Box::new((
+                UnaryOp::Call(vec![]),
+                Expr::Variable("foo".to_string()),
+            ))),
         )
     }
 
@@ -390,11 +511,10 @@ mod tests {
     fn index() {
         assert_expr(
             "arr[2]",
-            Expr::Term(
-                vec![],
-                Box::new(Expr::Variable("arr".to_string())),
-                vec![PostfixOp::Index(Expr::Literal(Value::Int(2)))],
-            ),
+            Expr::UnaryOp(Box::new((
+                UnaryOp::Index(Expr::Literal(Value::Int(2))),
+                Expr::Variable("arr".to_string()),
+            ))),
         )
     }
 
@@ -402,14 +522,13 @@ mod tests {
     fn member_access() {
         assert_expr(
             "object.method()",
-            Expr::Term(
-                vec![],
-                Box::new(Expr::Variable("object".to_string())),
-                vec![
-                    PostfixOp::Member("method".to_string()),
-                    PostfixOp::Call(vec![]),
-                ],
-            ),
+            Expr::UnaryOp(Box::new((
+                UnaryOp::Call(vec![]),
+                Expr::UnaryOp(Box::new((
+                    UnaryOp::Member("method".to_string()),
+                    Expr::Variable("object".to_string()),
+                ))),
+            ))),
         )
     }
 
@@ -417,13 +536,15 @@ mod tests {
     fn assign() {
         assert_expr(
             "j = i += 1",
-            Expr::BinaryOps(
-                Box::new(Expr::Variable("j".to_string())),
-                vec![
-                    (BinaryOp::Assign, Expr::Variable("i".to_string())),
-                    (BinaryOp::AddAssign, Expr::Literal(Value::Int(1))),
-                ],
-            ),
+            Expr::BinaryOp(Box::new((
+                BinaryOp::Assign,
+                Expr::Variable("j".to_string()),
+                Expr::BinaryOp(Box::new((
+                    BinaryOp::AddAssign,
+                    Expr::Variable("i".to_string()),
+                    Expr::Literal(Value::Int(1)),
+                ))),
+            ))),
         )
     }
 }
