@@ -4,6 +4,7 @@ use crate::eval::EvalError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    Null,
     Bool(bool),
     Int(i64),
     Float(f64),

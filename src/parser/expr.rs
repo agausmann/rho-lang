@@ -1,4 +1,3 @@
-use crate::eval::EvalError;
 use crate::parser::token::Token;
 use crate::parser::token::TokenKind;
 use crate::value::Value;
@@ -98,26 +97,6 @@ impl BinaryOp {
 
     fn is_right_associative(&self) -> bool {
         !self.is_left_associative()
-    }
-
-    pub(crate) fn short_circuit(&self, left: &Value) -> Result<Option<Value>, EvalError> {
-        match self {
-            Self::And => {
-                if left.as_bool()? == false {
-                    Ok(Some(left.clone()))
-                } else {
-                    Ok(None)
-                }
-            }
-            Self::Or => {
-                if left.as_bool()? == true {
-                    Ok(Some(left.clone()))
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => Ok(None)
-        }
     }
 }
 
