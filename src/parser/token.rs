@@ -104,7 +104,10 @@ fn float_int_suffix() -> impl Parser<char, Vec<char>, Error = Error> {
 }
 
 fn parse_number(string: String) -> TokenKind {
-    if string.contains(&['.', 'e', 'E'][..]) {
+    if string.is_empty() {
+        // Leading 0 was cut off.
+        TokenKind::Int(0)
+    } else if string.contains(&['.', 'e', 'E'][..]) {
         TokenKind::Float(string.parse().unwrap())
     } else {
         TokenKind::Int(string.parse().unwrap())
@@ -132,7 +135,7 @@ fn leading_digit_number() -> impl Parser<char, TokenKind, Error = Error> {
                 .map(|s| TokenKind::Int(i64::from_str_radix(&s, 2).unwrap())),
         ))
         .or(digit()
-            .repeated_at_least(1)
+            .repeated()
             .chain::<char, _, _>(float_int_suffix())
             .collect::<String>()
             .map(parse_number)),
@@ -313,5 +316,10 @@ mod tests {
                 TokenKind::Float(2.99e8),
             ],
         )
+    }
+
+    #[test]
+    fn zero() {
+        assert_tokens("0", &[TokenKind::Int(0)]);
     }
 }
