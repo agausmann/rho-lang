@@ -58,6 +58,7 @@ pub enum TokenKind {
     Dot,
     Comma,
     Colon,
+    Semicolon,
     Equal,
     Less,
     Greater,
@@ -67,6 +68,17 @@ pub enum TokenKind {
     String(String),
     True,
     False,
+}
+
+pub fn token(kind: TokenKind) -> impl Parser<Token, Token, Error = Simple<Token>> {
+    just(Token::of(kind))
+}
+
+pub fn non_padded(kind: TokenKind) -> impl Parser<Token, Token, Error = Simple<Token>> {
+    just(Token {
+        kind,
+        has_space_before: Some(false),
+    })
 }
 
 fn nonzero_digit() -> impl Parser<char, char, Error = Error> {
@@ -219,6 +231,7 @@ fn token_kind() -> impl Parser<char, TokenKind, Error = Error> {
     .or(just('.').to(TokenKind::Dot))
     .or(just(',').to(TokenKind::Comma))
     .or(just(':').to(TokenKind::Colon))
+    .or(just(';').to(TokenKind::Semicolon))
     .or(just('=').to(TokenKind::Equal))
     .or(just('<').to(TokenKind::Less))
     .or(just('>').to(TokenKind::Greater))

@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::mem::replace;
 
-use crate::parser::expr::BinaryOp;
-use crate::parser::expr::Expr;
-use crate::parser::expr::UnaryOp;
+use crate::parser::block::Statement;
+use crate::parser::expr::{BinaryOp, Expr, UnaryOp};
 use crate::value::Value;
 
 #[derive(Debug)]
@@ -71,14 +70,14 @@ fn lvalue<'a>(scope: &'a mut Scope, expr: &Expr) -> Result<Lvalue<'a>, EvalError
     Ok(Lvalue { slot })
 }
 
-pub fn eval_expr(scope: &mut Scope, expr: &Expr) -> Result<Value, EvalError> {
+pub fn eval(scope: &mut Scope, expr: &Expr) -> Result<Value, EvalError> {
     match expr {
         Expr::Invalid => Err(EvalError::Invalid),
         Expr::Literal(value) => Ok(value.clone()),
         Expr::Variable(name) => scope.get(&name),
         Expr::UnaryOp(boxed) => {
             let (op, base_expr) = boxed.as_ref();
-            let base = eval_expr(scope, base_expr)?;
+            let base = eval(scope, base_expr)?;
             match op {
                 UnaryOp::Neg => base.neg(),
                 UnaryOp::Not => base.not(),
@@ -90,78 +89,95 @@ pub fn eval_expr(scope: &mut Scope, expr: &Expr) -> Result<Value, EvalError> {
         Expr::BinaryOp(boxed) => {
             let (op, left, right) = boxed.as_ref();
             match op {
-                BinaryOp::Add => eval_expr(scope, left)?.add(eval_expr(scope, right)?),
-                BinaryOp::Sub => eval_expr(scope, left)?.sub(eval_expr(scope, right)?),
-                BinaryOp::Mul => eval_expr(scope, left)?.mul(eval_expr(scope, right)?),
-                BinaryOp::Div => eval_expr(scope, left)?.div(eval_expr(scope, right)?),
-                BinaryOp::Rem => eval_expr(scope, left)?.rem(eval_expr(scope, right)?),
+                BinaryOp::Add => eval(scope, left)?.add(eval(scope, right)?),
+                BinaryOp::Sub => eval(scope, left)?.sub(eval(scope, right)?),
+                BinaryOp::Mul => eval(scope, left)?.mul(eval(scope, right)?),
+                BinaryOp::Div => eval(scope, left)?.div(eval(scope, right)?),
+                BinaryOp::Rem => eval(scope, left)?.rem(eval(scope, right)?),
                 BinaryOp::And => Ok(Value::Bool(
-                    eval_expr(scope, left)?.as_bool()? && eval_expr(scope, right)?.as_bool()?,
+                    eval(scope, left)?.as_bool()? && eval(scope, right)?.as_bool()?,
                 )),
                 BinaryOp::Or => Ok(Value::Bool(
-                    eval_expr(scope, left)?.as_bool()? || eval_expr(scope, right)?.as_bool()?,
+                    eval(scope, left)?.as_bool()? || eval(scope, right)?.as_bool()?,
                 )),
-                BinaryOp::BitAnd => eval_expr(scope, left)?.bitand(eval_expr(scope, right)?),
-                BinaryOp::BitOr => eval_expr(scope, left)?.bitor(eval_expr(scope, right)?),
-                BinaryOp::BitXor => eval_expr(scope, left)?.bitxor(eval_expr(scope, right)?),
-                BinaryOp::Eq => Ok(Value::Bool(
-                    eval_expr(scope, left)? == eval_expr(scope, right)?,
-                )),
-                BinaryOp::Ne => Ok(Value::Bool(
-                    eval_expr(scope, left)? != eval_expr(scope, right)?,
-                )),
-                BinaryOp::Lt => eval_expr(scope, left)?.lt(eval_expr(scope, right)?),
-                BinaryOp::Le => eval_expr(scope, left)?.le(eval_expr(scope, right)?),
-                BinaryOp::Gt => eval_expr(scope, left)?.gt(eval_expr(scope, right)?),
-                BinaryOp::Ge => eval_expr(scope, left)?.ge(eval_expr(scope, right)?),
+                BinaryOp::BitAnd => eval(scope, left)?.bitand(eval(scope, right)?),
+                BinaryOp::BitOr => eval(scope, left)?.bitor(eval(scope, right)?),
+                BinaryOp::BitXor => eval(scope, left)?.bitxor(eval(scope, right)?),
+                BinaryOp::Eq => Ok(Value::Bool(eval(scope, left)? == eval(scope, right)?)),
+                BinaryOp::Ne => Ok(Value::Bool(eval(scope, left)? != eval(scope, right)?)),
+                BinaryOp::Lt => eval(scope, left)?.lt(eval(scope, right)?),
+                BinaryOp::Le => eval(scope, left)?.le(eval(scope, right)?),
+                BinaryOp::Gt => eval(scope, left)?.gt(eval(scope, right)?),
+                BinaryOp::Ge => eval(scope, left)?.ge(eval(scope, right)?),
                 BinaryOp::Assign => {
                     //TODO is this evaluation order correct?
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.set(right)
                 }
                 BinaryOp::AddAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.add(right))
                 }
                 BinaryOp::SubAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.sub(right))
-                },
+                }
                 BinaryOp::MulAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.mul(right))
                 }
                 BinaryOp::DivAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.div(right))
                 }
                 BinaryOp::RemAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.rem(right))
                 }
                 BinaryOp::AndAssign => {
-                    let left_value = eval_expr(scope, left)?;
-                    let right_value = eval_expr(scope, right)?;
-                    lvalue(scope, left)?.set(Value::Bool(left_value.as_bool()? && right_value.as_bool()?))
+                    let left_value = eval(scope, left)?;
+                    let right_value = eval(scope, right)?;
+                    lvalue(scope, left)?
+                        .set(Value::Bool(left_value.as_bool()? && right_value.as_bool()?))
                 }
                 BinaryOp::OrAssign => {
-                    let left_value = eval_expr(scope, left)?;
-                    let right_value = eval_expr(scope, right)?;
-                    lvalue(scope, left)?.set(Value::Bool(left_value.as_bool()? && right_value.as_bool()?))
+                    let left_value = eval(scope, left)?;
+                    let right_value = eval(scope, right)?;
+                    lvalue(scope, left)?
+                        .set(Value::Bool(left_value.as_bool()? && right_value.as_bool()?))
                 }
                 BinaryOp::BitAndAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.bitand(right))
                 }
                 BinaryOp::BitOrAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.bitor(right))
                 }
                 BinaryOp::BitXorAssign => {
-                    let right = eval_expr(scope, right)?;
+                    let right = eval(scope, right)?;
                     lvalue(scope, left)?.try_update(|left| left.bitxor(right))
                 }
             }
+        }
+        Expr::Block(block) => {
+            for statement in &block.statements {
+                exec(scope, statement)?;
+            }
+            if let Some(value_expr) = &block.value {
+                eval(scope, value_expr)
+            } else {
+                Ok(Value::Null)
+            }
+        }
+    }
+}
+
+pub fn exec(scope: &mut Scope, statement: &Statement) -> Result<(), EvalError> {
+    match statement {
+        Statement::Expr(expr) => {
+            eval(scope, expr)?;
+            Ok(())
         }
     }
 }
@@ -177,7 +193,7 @@ mod tests {
     fn assert_eval(expr_str: &str, expected: Value) {
         let tokens = get_tokens(expr_str).unwrap();
         let expr = expr().padded_by(end()).parse(tokens).unwrap();
-        let value = eval_expr(&mut Scope::new(), &expr).unwrap();
+        let value = eval(&mut Scope::new(), &expr).unwrap();
         assert_eq!(expected, value);
     }
 
@@ -202,5 +218,15 @@ mod tests {
     #[test]
     fn two_plus_two_not_five() {
         assert_eval("2 + 2 == 5", Value::Bool(false));
+    }
+
+    #[test]
+    fn block() {
+        assert_eval("{ a = 2; a }", Value::Int(2));
+    }
+
+    #[test]
+    fn block_assign_multiple() {
+        assert_eval("{ foo = 0; foo += 1; foo -= 10; foo + 5 }", Value::Int(0 + 1 - 10 + 5));
     }
 }

@@ -1,5 +1,5 @@
-use crate::parser::token::Token;
-use crate::parser::token::TokenKind;
+use crate::parser::block::{block, Block};
+use crate::parser::token::{non_padded, token, Token, TokenKind};
 use crate::value::Value;
 use chumsky::prelude::*;
 
@@ -98,17 +98,6 @@ impl BinaryOp {
     fn is_right_associative(&self) -> bool {
         !self.is_left_associative()
     }
-}
-
-fn token(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
-    just(Token::of(kind))
-}
-
-fn non_padded(kind: TokenKind) -> impl Parser<Token, Token, Error = Error> {
-    just(Token {
-        kind,
-        has_space_before: Some(false),
-    })
 }
 
 fn comma_separated<P: 'static, T: 'static>(parser: P) -> impl Parser<Token, Vec<T>, Error = Error>
@@ -215,7 +204,8 @@ pub enum UnaryOp {
 }
 
 fn prefix_op() -> impl Parser<Token, UnaryOp, Error = Error> {
-    token(TokenKind::Minus).to(UnaryOp::Neg)
+    token(TokenKind::Minus)
+        .to(UnaryOp::Neg)
         .or(token(TokenKind::Exclamation).to(UnaryOp::Not))
 }
 
@@ -256,6 +246,7 @@ pub enum Expr {
     Variable(String),
     BinaryOp(Box<(BinaryOp, Expr, Expr)>),
     UnaryOp(Box<(UnaryOp, Expr)>),
+    Block(Block),
 }
 
 fn term<E>(expr: E) -> impl Parser<Token, Expr, Error = Error>
@@ -282,7 +273,8 @@ where
                     Token::of(TokenKind::LeftParen),
                     Token::of(TokenKind::RightParen),
                 )
-                .map(|option| option.unwrap_or(Expr::Invalid))),
+                .map(|option| option.unwrap_or(Expr::Invalid)))
+            .or(block(expr.clone()).map(Expr::Block)),
         )
         .then(postfix_op(expr).repeated())
         .map(|((prefix, base), postfix)| {
