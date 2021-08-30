@@ -14,26 +14,57 @@ pub enum EvalError {
 }
 
 pub struct Scope {
-    variables: HashMap<String, Value>,
+    stack: Vec<HashMap<String, Value>>,
+    top: HashMap<String, Value>,
 }
 
 impl Scope {
     pub fn new() -> Self {
         Self {
-            variables: HashMap::new(),
+            stack: Vec::new(),
+            top: HashMap::new(),
         }
     }
 
     pub fn get(&self, key: &str) -> Result<Value, EvalError> {
-        self.variables.get(key).cloned().ok_or(EvalError::NameError)
+        if let Some(value) = self.top.get(key).cloned() {
+            return Ok(value);
+        }
+        for level in self.stack.iter().rev() {
+            if let Some(value) = level.get(key).cloned() {
+                return Ok(value);
+            }
+        }
+        Err(EvalError::NameError)
     }
 
     pub fn get_mut(&mut self, key: &str) -> Result<&mut Value, EvalError> {
-        self.variables.get_mut(key).ok_or(EvalError::NameError)
+        if let Some(value) = self.top.get_mut(key) {
+            return Ok(value);
+        }
+        for level in self.stack.iter_mut().rev() {
+            if let Some(value) = level.get_mut(key) {
+                return Ok(value);
+            }
+        }
+        Err(EvalError::NameError)
     }
 
     pub fn get_or_insert(&mut self, key: &str, value: Value) -> &mut Value {
-        self.variables.entry(key.to_string()).or_insert(value)
+        for level in self.stack.iter_mut().rev() {
+            if let Some(value) = level.get_mut(key) {
+                return value;
+            }
+        }
+        self.top.entry(key.to_string()).or_insert(value)
+    }
+
+    fn enter(&mut self) {
+        self.stack.push(replace(&mut self.top, HashMap::new()));
+    }
+
+    fn exit(&mut self) {
+        self.top = self.stack.pop().expect("scope underflow");
     }
 }
 
@@ -161,14 +192,19 @@ pub fn eval(scope: &mut Scope, expr: &Expr) -> Result<Value, EvalError> {
             }
         }
         Expr::Block(block) => {
-            for statement in &block.statements {
-                exec(scope, statement)?;
-            }
-            if let Some(value_expr) = &block.value {
-                eval(scope, value_expr)
-            } else {
-                Ok(Value::Null)
-            }
+            scope.enter();
+            let result = (|| {
+                for statement in &block.statements {
+                    exec(scope, statement)?;
+                }
+                if let Some(value_expr) = &block.value {
+                    eval(scope, value_expr)
+                } else {
+                    Ok(Value::Null)
+                }
+            })();
+            scope.exit();
+            result
         }
     }
 }
@@ -222,11 +258,39 @@ mod tests {
 
     #[test]
     fn block() {
-        assert_eval("{ a = 2; a }", Value::Int(2));
+        assert_eval(
+            "{
+                a = 2;
+                a
+            }",
+            Value::Int(2),
+        );
     }
 
     #[test]
     fn block_assign_multiple() {
-        assert_eval("{ foo = 0; foo += 1; foo -= 10; foo + 5 }", Value::Int(0 + 1 - 10 + 5));
+        assert_eval(
+            "{
+                foo = 0;
+                foo += 1;
+                foo -= 10;
+                foo + 5
+            }",
+            Value::Int(0 + 1 - 10 + 5),
+        );
+    }
+
+    #[test]
+    fn assign_parent_scope() {
+        assert_eval(
+            "{
+                a = 0;
+                {
+                    a += 1;
+                }; //TODO this semicolon shouldn't be required
+                a
+            }",
+            Value::Int(1),
+        );
     }
 }
